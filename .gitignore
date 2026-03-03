@@ -1,0 +1,12 @@
+# Build
+build/
+.gradle/
+out/
+
+# ANGLE download cache
+angle-x64-*.zip
+angle-extract/
+
+# IDE
+.idea/
+*.iml
