@@ -43,6 +43,11 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
+
+import com.gpu.overlays.FrameTimer;
+import com.gpu.overlays.FrameTimerOverlay;
+import com.gpu.overlays.Timer;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.BufferProvider;
 import net.runelite.api.Client;
@@ -133,12 +138,18 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	@Inject
 	private RenderCallbackManager renderCallbackManager;
 
+	@Inject
+	private FrameTimer frameTimer;
+
+	@Inject
+	private FrameTimerOverlay frameTimerOverlay;
+
 	private Canvas canvas;
 	private AWTContext awtContext;
 	private Callback debugCallback;
 
 	private boolean lwjglInitted = false;
-	private GLCapabilities glCapabilities;
+	public static GLCapabilities glCapabilities;
 
 	static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vert.glsl")
@@ -183,6 +194,12 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 	private SceneUploader clientUploader, mapUploader;
 	private FacePrioritySorter facePrioritySorter;
+
+	public boolean enableDetailedTimers;
+	@Getter
+	public long garbageCollectionCount;
+
+	private boolean drawSceneStarted;
 
 	static class SceneContext
 	{
@@ -377,6 +394,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 				}
 
 				checkGLErrors();
+
+				frameTimerOverlay.setActive(true);
 			}
 			catch (Throwable e)
 			{
@@ -422,6 +441,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	{
 		clientThread.invoke(() ->
 		{
+			frameTimerOverlay.setActive(false);
 			client.setGpuFlags(0);
 			client.setDrawCallbacks(null);
 			client.setUnlockedFps(false);
@@ -512,15 +532,22 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		}
 	}
 
-	private void setupSyncMode()
+	public void setupSyncMode()
 	{
-		final boolean unlockFps = config.unlockFps();
-		client.setUnlockedFps(unlockFps);
+		boolean unlockFps = config.unlockFps();
 
 		// Without unlocked fps, the client manages sync on its 20ms timer
 		GpuPluginConfig.SyncMode syncMode = unlockFps
-			? this.config.syncMode()
-			: GpuPluginConfig.SyncMode.OFF;
+				? this.config.syncMode()
+				: GpuPluginConfig.SyncMode.OFF;
+
+		if (frameTimer.isActive()) {
+			unlockFps = true;
+			syncMode = GpuPluginConfig.SyncMode.OFF;
+		}
+		client.setUnlockedFps(unlockFps);
+
+
 
 		int swapInterval = 0;
 		switch (syncMode)
@@ -803,6 +830,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds)
 	{
+		drawSceneStarted = false;
+		frameTimer.begin(Timer.DRAW_PRESCENE);
 		SceneContext ctx = context(scene);
 		if (ctx != null)
 		{
@@ -828,6 +857,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 			vaoPO.addRange(null, toplevel);
 			glUniform4i(uniEntityTint, scene.getOverrideHue(), scene.getOverrideSaturation(), scene.getOverrideLuminance(), scene.getOverrideAmount());
 		}
+		frameTimer.end(Timer.DRAW_PRESCENE);
 	}
 
 	private void preSceneDrawToplevel(Scene scene,
@@ -993,6 +1023,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	@Override
 	public void postSceneDraw(Scene scene)
 	{
+		frameTimer.begin(Timer.DRAW_POSTSCENE);
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
 			postDrawToplevel();
@@ -1001,6 +1032,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		{
 			glUniform4i(uniEntityTint, 0, 0, 0, 0);
 		}
+		frameTimer.end(Timer.DRAW_POSTSCENE);
 	}
 
 	private void postDrawToplevel()
@@ -1015,6 +1047,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 	private void blitSceneFbo()
 	{
+		frameTimer.begin(Timer.RENDER_SCENE);
 		int width = lastStretchedCanvasWidth;
 		int height = lastStretchedCanvasHeight;
 
@@ -1032,6 +1065,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 		// Reset
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFbo);
+		frameTimer.end(Timer.RENDER_SCENE);
 
 		checkGLErrors();
 	}
@@ -1039,6 +1073,12 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	@Override
 	public void drawZoneOpaque(Projection entityProjection, Scene scene, int zx, int zz)
 	{
+		if (!drawSceneStarted)
+		{
+			frameTimer.begin(Timer.DRAW_SCENE);
+			drawSceneStarted = true;
+		}
+		frameTimer.begin(Timer.DRAW_ZONE_OPAQUE);
 		updateEntityProjection(entityProjection);
 
 		SceneContext ctx = context(scene);
@@ -1056,6 +1096,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		int offset = scene.getWorldViewId() == -1 ? (SCENE_OFFSET >> 3) : 0;
 		z.renderOpaque(zx - offset, zz - offset, ctx.minLevel, ctx.level, ctx.maxLevel, ctx.hideRoofIds);
 
+		frameTimer.end(Timer.DRAW_ZONE_OPAQUE);
 		checkGLErrors();
 	}
 
@@ -1064,6 +1105,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	@Override
 	public void drawZoneAlpha(Projection entityProjection, Scene scene, int level, int zx, int zz)
 	{
+		frameTimer.begin(Timer.DRAW_ZONE_ALPHA);
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{
@@ -1095,15 +1137,23 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 		z.renderAlpha(zx - offset, zz - offset, cameraYaw, cameraPitch, ctx.minLevel, ctx.level, ctx.maxLevel, level, ctx.hideRoofIds, !close || (scene.getOverrideAmount() > 0));
 
+		frameTimer.end(Timer.DRAW_ZONE_ALPHA);
 		checkGLErrors();
 	}
 
 	@Override
 	public void drawPass(Projection projection, Scene scene, int pass)
 	{
+		frameTimer.begin(Timer.DRAW_PASS);
 		SceneContext ctx = context(scene);
 		if (ctx == null)
 		{
+			if (drawSceneStarted)
+			{
+				frameTimer.end(Timer.DRAW_SCENE);
+				drawSceneStarted = false;
+			}
+			frameTimer.end(Timer.DRAW_PASS);
 			return;
 		}
 
@@ -1160,6 +1210,12 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 			}
 		}
 
+		if (pass == DrawCallbacks.PASS_ALPHA && drawSceneStarted)
+		{
+			frameTimer.end(Timer.DRAW_SCENE);
+			drawSceneStarted = false;
+		}
+		frameTimer.end(Timer.DRAW_PASS);
 		checkGLErrors();
 	}
 
@@ -1378,17 +1434,24 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		final int width = bufferProvider.getWidth();
 		final int height = bufferProvider.getHeight();
 
+		frameTimer.begin(Timer.MAP_UI_BUFFER);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, interfacePbo);
 		ByteBuffer interfaceBuf = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+		frameTimer.end(Timer.MAP_UI_BUFFER);
+
 		if (interfaceBuf != null)
 		{
+			frameTimer.begin(Timer.COPY_UI);
 			interfaceBuf
 				.asIntBuffer()
 				.put(pixels, 0, width * height);
+			frameTimer.end(Timer.COPY_UI);
 			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
 		}
+		frameTimer.begin(Timer.UPLOAD_UI);
 		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0);
+		frameTimer.end(Timer.UPLOAD_UI);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
@@ -1396,6 +1459,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	@Override
 	public void draw(int overlayColor)
 	{
+		frameTimer.begin(Timer.DRAW_FRAME);
+
 		final GameState gameState = client.getGameState();
 		if (gameState == GameState.STARTING)
 		{
@@ -1434,6 +1499,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		// Texture on UI
 		drawUi(overlayColor, canvasHeight, canvasWidth);
 
+		frameTimer.begin(Timer.SWAP_BUFFERS);
 		try
 		{
 			awtContext.swapBuffers();
@@ -1441,6 +1507,9 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		catch (RuntimeException ex)
 		{
 			// this is always fatal
+			frameTimer.end(Timer.SWAP_BUFFERS);
+			frameTimer.endFrameAndReset();
+
 			if (!canvas.isValid())
 			{
 				// this might be AWT shutting down on VM shutdown, ignore it
@@ -1463,6 +1532,10 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 			});
 			return;
 		}
+		frameTimer.end(Timer.SWAP_BUFFERS);
+
+		frameTimer.end(Timer.DRAW_FRAME);
+		frameTimer.endFrameAndReset();
 
 		drawManager.processDrawComplete(this::screenshot);
 
@@ -1473,6 +1546,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 	private void drawUi(final int overlayColor, final int canvasHeight, final int canvasWidth)
 	{
+		frameTimer.begin(Timer.RENDER_UI);
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
@@ -1521,6 +1595,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		glUseProgram(0);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glDisable(GL_BLEND);
+
+		frameTimer.end(Timer.RENDER_UI);
 	}
 
 	/**
