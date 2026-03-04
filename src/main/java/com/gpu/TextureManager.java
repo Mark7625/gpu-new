@@ -29,10 +29,7 @@ import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
-import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
-import org.lwjgl.opengl.GL;
-import static org.lwjgl.opengl.GL33C.*;
-import static org.lwjgl.opengl.GL42C.glTexStorage3D;
+import static com.gpu.GLApi.*;
 
 @Singleton
 @Slf4j
@@ -52,7 +49,7 @@ class TextureManager
 
 		int textureArrayId = glGenTextures();
 		glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
-		if (GL.getCapabilities().glTexStorage3D != 0)
+		if (hasTexStorage3D())
 		{
 			glTexStorage3D(GL_TEXTURE_2D_ARRAY, 8, GL_RGBA8, TEXTURE_SIZE, TEXTURE_SIZE, textures.length);
 		}
@@ -106,12 +103,12 @@ class TextureManager
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
 		}
 
-		if (GL.getCapabilities().GL_EXT_texture_filter_anisotropic)
+		if (hasAnisotropicFiltering())
 		{
-			final float maxSamples = glGetFloat(EXTTextureFilterAnisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+			final float maxSamples = glGetFloat(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT);
 			//Clamp from 1 to max GL says it supports.
 			final float anisoLevel = Math.max(1, Math.min(maxSamples, level));
-			glTexParameterf(GL_TEXTURE_2D_ARRAY, EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, anisoLevel);
+			glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisoLevel);
 		}
 	}
 

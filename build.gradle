@@ -9,10 +9,15 @@ repositories {
 
 def runeLiteVersion = '1.12.+'
 def lwjglVersion = '3.3.3'
-def angleVersion = '2026-03-01'
 
 dependencies {
     compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+
+    implementation platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+    implementation 'org.lwjgl:lwjgl-egl'
+    implementation 'org.lwjgl:lwjgl-opengles'
+    implementation 'org.lwjgl:lwjgl-jawt'
+    runtimeOnly "org.lwjgl:lwjgl-opengles:$lwjglVersion:natives-windows"
 
     compileOnly 'org.projectlombok:lombok:1.18.20'
     annotationProcessor 'org.projectlombok:lombok:1.18.20'
@@ -32,4 +37,12 @@ sourceCompatibility = '11'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
+}
+
+def rlawtDll = file("${projectDir}/libs/rlawt/windows-x86_64/rlawt.dll")
+tasks.register('run', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.gpu.GpuPluginTest'
+	jvmArgs "-ea", "-Drunelite.rlawtpath=${rlawtDll.absolutePath}"
+	args "--developer-mode", "--debug"
 }

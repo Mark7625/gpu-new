@@ -1,3 +1,4 @@
+#include "glsl_version"
 /*
  * Copyright (c) 2018, Adam <Adam@sigterm.info>
  * All rights reserved.
@@ -22,7 +23,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#version 330
 
 //#define ZBUF_DEBUG
 //#define BIAS_DEBUG
@@ -35,8 +35,8 @@
 
 #define TILE_SIZE 128.f
 
-#define FOG_SCENE_EDGE_MIN ((-expandedMapLoadingChunks * 8 + 1) * TILE_SIZE)
-#define FOG_SCENE_EDGE_MAX ((104 + expandedMapLoadingChunks * 8 - 1) * TILE_SIZE)
+#define FOG_SCENE_EDGE_MIN ((-float(expandedMapLoadingChunks) * 8.0 + 1.0) * TILE_SIZE)
+#define FOG_SCENE_EDGE_MAX ((104.0 + float(expandedMapLoadingChunks) * 8.0 - 1.0) * TILE_SIZE)
 #define FOG_CORNER_ROUNDING 1.5
 #define FOG_CORNER_ROUNDING_SQUARED (FOG_CORNER_ROUNDING * FOG_CORNER_ROUNDING)
 
@@ -65,7 +65,7 @@ uniform int tick;
 uniform vec2 textureAnimations[TEXTURE_COUNT];
 
 out vec4 fColor;
-noperspective centroid out float fHsl;
+INTERP_QUALIFIER out float fHsl;
 flat out int fTextureId;
 out vec2 fUv;
 out float fFogAmount;
@@ -80,12 +80,12 @@ float fogFactorLinear(const float dist, const float start, const float end) {
 }
 
 void main() {
-  vec4 vert = vec4(vertf + base, 1);
+  vec4 vert = vec4(vertf + vec3(base), 1);
   float a = float(abhsl >> 24 & 0xff) / 255.f;
   int bias = (abhsl >> 16) & 0xff;
 
   vec3 hsl = vec3(abhsl >> 10 & 63, abhsl >> 7 & 7, abhsl & 127);
-  hsl += ((entityTint.xyz - hsl) * entityTint.w) / 128;
+  hsl += ((vec3(entityTint.xyz) - hsl) * float(entityTint.w)) / 128.0;
   vec3 rgb = hslToRgb(hsl);
 
   vec4 worldPos = entityProj * vert;
@@ -111,10 +111,10 @@ void main() {
     fHsl = float(((int(hsl[0]) & 63) << 10) | ((int(hsl[1]) & 7) << 7) | (int(hsl[2]) & 127));
   }
 
-  float fogWest = max(FOG_SCENE_EDGE_MIN, cameraX - drawDistance);
-  float fogEast = min(FOG_SCENE_EDGE_MAX, cameraX + drawDistance);
-  float fogSouth = max(FOG_SCENE_EDGE_MIN, cameraZ - drawDistance);
-  float fogNorth = min(FOG_SCENE_EDGE_MAX, cameraZ + drawDistance);
+  float fogWest = max(FOG_SCENE_EDGE_MIN, cameraX - float(drawDistance));
+  float fogEast = min(FOG_SCENE_EDGE_MAX, cameraX + float(drawDistance));
+  float fogSouth = max(FOG_SCENE_EDGE_MIN, cameraZ - float(drawDistance));
+  float fogNorth = min(FOG_SCENE_EDGE_MAX, cameraZ + float(drawDistance));
 
   // Calculate distance from the scene edge
   float xDist = min(worldPos.x - fogWest, fogEast - worldPos.x);
@@ -125,5 +125,5 @@ void main() {
       nearestEdgeDistance - FOG_CORNER_ROUNDING * TILE_SIZE *
                                 max(0.f, (nearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED) / (secondNearestEdgeDistance + FOG_CORNER_ROUNDING_SQUARED));
 
-  fFogAmount = fogFactorLinear(fogDistance, 0.f, fogDepth * TILE_SIZE) * useFog;
+  fFogAmount = fogFactorLinear(fogDistance, 0.0, float(fogDepth) * TILE_SIZE) * float(useFog);
 }

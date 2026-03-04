@@ -32,7 +32,7 @@ import net.runelite.api.Projection;
 import net.runelite.api.Scene;
 import static com.gpu.GpuPluginGles.uniEntityTint;
 import static com.gpu.GpuPluginGles.updateEntityProjection;
-import static org.lwjgl.opengl.GL33C.*;
+import static com.gpu.GLApi.*;
 
 class VAO
 {

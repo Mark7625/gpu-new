@@ -26,7 +26,7 @@ package com.gpu;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
-import static org.lwjgl.opengl.GL33C.*;
+import static com.gpu.GLApi.*;
 
 class VBO
 {

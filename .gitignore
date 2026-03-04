@@ -10,3 +10,5 @@ angle-extract/
 # IDE
 .idea/
 *.iml
+/libs
+/rlawt

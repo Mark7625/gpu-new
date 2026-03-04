@@ -32,7 +32,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import com.gpu.template.Template;
-import static org.lwjgl.opengl.GL33C.*;
+import static com.gpu.GLApi.*;
 
 @Slf4j
 class Shader

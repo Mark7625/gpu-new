@@ -1,3 +1,4 @@
+#include "glsl_version"
 /*
  * Copyright (c) 2018, Adam <Adam@sigterm.info>
  * All rights reserved.
@@ -22,7 +23,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#version 330
 
 //#define FRAG_UVS
 //#define ZBUF_DEBUG
@@ -36,7 +36,7 @@ uniform vec4 fogColor;
 uniform float textureLightMode;
 
 in vec4 fColor;
-noperspective centroid in float fHsl;
+INTERP_QUALIFIER in float fHsl;
 flat in int fTextureId;
 in vec2 fUv;
 in float fFogAmount;

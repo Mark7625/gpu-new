@@ -37,6 +37,7 @@ import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -44,9 +45,11 @@ import java.util.concurrent.CountDownLatch;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 
+import com.gpu.config.AngleBackend;
 import com.gpu.overlays.FrameTimer;
 import com.gpu.overlays.FrameTimerOverlay;
 import com.gpu.overlays.Timer;
+import gpu.hd.rlawt.AWTContext;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.BufferProvider;
@@ -81,17 +84,17 @@ import com.gpu.config.UIScalingMode;
 import com.gpu.template.Template;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
-import net.runelite.rlawt.AWTContext;
-import org.lwjgl.opengl.GL;
-import static org.lwjgl.opengl.GL33C.*;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_SOURCE_API;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_TYPE_OTHER;
-import static org.lwjgl.opengl.GL43C.GL_DEBUG_TYPE_PERFORMANCE;
-import static org.lwjgl.opengl.GL43C.glDebugMessageControl;
-import static org.lwjgl.opengl.GL45C.GL_ZERO_TO_ONE;
-import static org.lwjgl.opengl.GL45C.glClipControl;
-import org.lwjgl.opengl.GLCapabilities;
+
+import static com.gpu.GLApi.*;
+import static org.lwjgl.opengles.GLES30.GL_BACK;
+import static org.lwjgl.opengles.GLES32.GL_DEBUG_SOURCE_API;
+import static org.lwjgl.opengles.GLES32.GL_DEBUG_TYPE_OTHER;
+import static org.lwjgl.opengles.GLES32.GL_DEBUG_TYPE_PERFORMANCE;
+import static org.lwjgl.opengles.GLES32.glDebugMessageControl;
+
 import org.lwjgl.opengl.GLUtil;
+import org.lwjgl.opengles.GLES;
+import org.lwjgl.opengles.GLESCapabilities;
 import org.lwjgl.system.Callback;
 import org.lwjgl.system.Configuration;
 
@@ -149,7 +152,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	private Callback debugCallback;
 
 	private boolean lwjglInitted = false;
-	public static GLCapabilities glCapabilities;
+	public static GLESCapabilities glesCapabilities;
 
 	static final Shader PROGRAM = new Shader()
 		.add(GL_VERTEX_SHADER, "vert.glsl")
@@ -163,6 +166,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 	private int glUiProgram;
 
 	private int interfaceTexture;
+	private ByteBuffer interfaceUploadBuffer;
 	private int interfacePbo;
 
 	private int vaoUiHandle;
@@ -194,6 +198,13 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 
 	private SceneUploader clientUploader, mapUploader;
 	private FacePrioritySorter facePrioritySorter;
+
+	@Getter
+	private String renderDevice;
+	@Getter
+	private String renderVersion;
+	@Getter
+	private AngleBackend angleBackend;
 
 	public boolean enableDetailedTimers;
 	@Getter
@@ -300,10 +311,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 				fboScene = -1;
 				lastAnisotropicFilteringLevel = -1;
 
-				AWTContext.loadNatives();
-
 				canvas = client.getCanvas();
-
+				AWTContext rlawtCtx;
 				synchronized (canvas.getTreeLock())
 				{
 					if (!canvas.isValid())
@@ -311,11 +320,23 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 						return false;
 					}
 
+					AWTContext.loadNatives();
 					awtContext = new AWTContext(canvas);
-					awtContext.configurePixelFormat(0, 0, 0);
+					awtContext.useEGL(true, 0);
+					awtContext.useGLES(true);
+					awtContext.setAngleBackend(config.angleBackend().toNative());
+					awtContext.configurePixelFormat(8, 24, 0);
 				}
 
 				awtContext.createGLContext();
+				awtContext.makeCurrent();
+				GLES.createCapabilities();
+				angleBackend = AngleBackend.fromNative(awtContext.getAngleBackend());
+				AngleBackend requested = config.angleBackend();
+				log.info("ANGLE render backend: {}", angleBackend.getName());
+				if (angleBackend != requested) {
+					log.warn("Requested backend {} fell back to {}", requested.getName(), angleBackend.getName());
+				}
 
 				canvas.setIgnoreRepaint(true);
 
@@ -323,20 +344,25 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 				// to be created.
 				Configuration.SHARED_LIBRARY_EXTRACT_DIRECTORY.set("lwjgl-rl");
 
-				glCapabilities = GL.createCapabilities();
-
-				log.info("Using device: {}", glGetString(GL_RENDERER));
-				log.info("Using driver: {}", glGetString(GL_VERSION));
-
-				if (!glCapabilities.OpenGL33)
+				glesCapabilities = GLES.getCapabilities();
+				GLApi.glesCapabilities = glesCapabilities;
+				if (glesCapabilities == null)
 				{
-					throw new RuntimeException("OpenGL 3.3 is required but not available");
+					throw new RuntimeException("OpenGL ES 3.0 is required but not available");
 				}
+
+				String renderer = glGetString(GL_RENDERER);
+				String version = glGetString(GL_VERSION);
+				renderDevice = renderer;
+				renderVersion = version;
+				log.info("Using device: {}", renderer);
+				log.info("Using driver: {}", version);
+
 
 				lwjglInitted = true;
 
 				checkGLErrors();
-				if (log.isDebugEnabled() && glCapabilities.glDebugMessageControl != 0)
+				if (log.isDebugEnabled() && glesCapabilities.glDebugMessageControl != 0)
 				{
 					debugCallback = GLUtil.setupDebugMessageCallback();
 					if (debugCallback != null)
@@ -367,10 +393,6 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 				initVao();
 				initProgram();
 				initInterfaceTexture();
-				if (glCapabilities.OpenGL45)
-				{
-					glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); // 1 near 0 far
-				}
 
 				client.setDrawCallbacks(this);
 				client.setGpuFlags(DrawCallbacks.GPU
@@ -476,7 +498,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 				debugCallback = null;
 			}
 
-			glCapabilities = null;
+			glesCapabilities = null;
 
 			// force main buffer provider rebuild to turn off alpha channel
 			client.resizeCanvas();
@@ -547,7 +569,10 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		}
 		client.setUnlockedFps(unlockFps);
 
-
+		if (awtContext == null)
+		{
+			return;
+		}
 
 		int swapInterval = 0;
 		switch (syncMode)
@@ -580,6 +605,8 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		{
 			switch (key)
 			{
+				case "glsl_version":
+					return "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision mediump sampler2D;\nprecision mediump sampler2DArray;\n#define INTERP_QUALIFIER \n";
 				case "texture_config":
 					return "#define TEXTURE_COUNT " + TextureManager.TEXTURE_COUNT + "\n";
 				case "sampling_mode":
@@ -774,13 +801,13 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		// Color render buffer
 		rboColorBuffer = glGenRenderbuffers();
 		glBindRenderbuffer(GL_RENDERBUFFER, rboColorBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_RGBA, width, height);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_RGBA8, width, height);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColorBuffer);
 
 		// Depth render buffer
 		rboDepthBuffer = glGenRenderbuffers();
 		glBindRenderbuffer(GL_RENDERBUFFER, rboDepthBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_DEPTH_COMPONENT32F, width, height);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_DEPTH_COMPONENT24, width, height);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepthBuffer);
 
 		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -1420,13 +1447,18 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 			lastCanvasWidth = canvasWidth;
 			lastCanvasHeight = canvasHeight;
 
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, interfacePbo);
-			glBufferData(GL_PIXEL_UNPACK_BUFFER, canvasWidth * canvasHeight * 4L, GL_STREAM_DRAW);
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+			if (canvasWidth > 0 && canvasHeight > 0)
+			{
+				interfaceUploadBuffer = ByteBuffer.allocateDirect(canvasWidth * canvasHeight * 4).order(ByteOrder.nativeOrder());
+				glBindTexture(GL_TEXTURE_2D, interfaceTexture);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, canvasWidth, canvasHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+				glBindTexture(GL_TEXTURE_2D, 0);
+			}
+		}
 
-			glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasWidth, canvasHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
-			glBindTexture(GL_TEXTURE_2D, 0);
+		if (lastCanvasWidth <= 0 || lastCanvasHeight <= 0)
+		{
+			return;
 		}
 
 		final BufferProvider bufferProvider = client.getBufferProvider();
@@ -1434,25 +1466,48 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		final int width = bufferProvider.getWidth();
 		final int height = bufferProvider.getHeight();
 
-		frameTimer.begin(Timer.MAP_UI_BUFFER);
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, interfacePbo);
-		ByteBuffer interfaceBuf = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
-		frameTimer.end(Timer.MAP_UI_BUFFER);
-
-		if (interfaceBuf != null)
+		if (width <= 0 || height <= 0)
 		{
-			frameTimer.begin(Timer.COPY_UI);
-			interfaceBuf
-				.asIntBuffer()
-				.put(pixels, 0, width * height);
-			frameTimer.end(Timer.COPY_UI);
-			glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+			return;
 		}
-		frameTimer.begin(Timer.UPLOAD_UI);
+
+		int uploadWidth = Math.min(width, lastCanvasWidth);
+		int uploadHeight = Math.min(height, lastCanvasHeight);
+		if (uploadWidth <= 0 || uploadHeight <= 0)
+		{
+			return;
+		}
+
 		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0);
-		frameTimer.end(Timer.UPLOAD_UI);
-		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+		ByteBuffer buf = interfaceUploadBuffer;
+		if (buf != null && buf.capacity() >= (long) uploadWidth * uploadHeight * 4)
+		{
+			buf.clear();
+			IntBuffer intBuf = buf.asIntBuffer();
+			// BufferProvider pixels are ARGB ints; as ByteBuffer (little-endian) they become BGRA.
+			// Swap R<->B so upload as RGBA gives correct colors. Avoids texture swizzle which causes GL_INVALID_OPERATION with Mitchell/XBR/Hybrid.
+			if (uploadWidth == width && uploadHeight == height)
+			{
+				for (int i = 0; i < width * height; i++)
+				{
+					int p = pixels[i];
+					intBuf.put((p & 0xFF00FF00) | ((p >> 16) & 0xFF) | ((p << 16) & 0xFF0000));
+				}
+			}
+			else
+			{
+				for (int y = 0; y < uploadHeight; y++)
+				{
+					for (int x = 0; x < uploadWidth; x++)
+					{
+						int p = pixels[y * width + x];
+						intBuf.put((p & 0xFF00FF00) | ((p >> 16) & 0xFF) | ((p << 16) & 0xFF0000));
+					}
+				}
+			}
+			buf.rewind();
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uploadWidth, uploadHeight, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+		}
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
@@ -1624,7 +1679,7 @@ public class GpuPluginGles extends Plugin implements DrawCallbacks
 		ByteBuffer buffer = ByteBuffer.allocateDirect(width * height * 4)
 			.order(ByteOrder.nativeOrder());
 
-		glReadBuffer(awtContext.getBufferMode());
+		glReadBuffer(GL_BACK);
 		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
 
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);

@@ -44,7 +44,7 @@ import static com.gpu.FacePrioritySorter.zsortNext;
 import static com.gpu.FacePrioritySorter.zsortTail;
 import static com.gpu.GpuPluginGles.uniBase;
 import org.lwjgl.BufferUtils;
-import static org.lwjgl.opengl.GL33C.*;
+import static com.gpu.GLApi.*;
 
 @Slf4j
 @RequiredArgsConstructor

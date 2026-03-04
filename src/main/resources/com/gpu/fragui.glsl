@@ -1,3 +1,4 @@
+#include "glsl_version"
 /*
  * Copyright (c) 2018, Adam <Adam@sigterm.info>
  * All rights reserved.
@@ -22,7 +23,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#version 330
 
 #include sampling_mode
 #include colorblind_mode
@@ -67,7 +67,7 @@ void main() {
 #if SAMPLING_MODE == SAMPLING_MITCHELL || SAMPLING_MODE == SAMPLING_CATROM
   c = textureCubic(tex, TexCoord);
 #elif SAMPLING_MODE == SAMPLING_XBR
-  c = textureXBR(tex, TexCoord, xbrTable, ceil(1.0 * targetDimensions.x / sourceDimensions.x));
+  c = textureXBR(tex, TexCoord, xbrTable, ceil(float(targetDimensions.x) / float(sourceDimensions.x)));
 #elif SAMPLING_MODE == SAMPLING_HYBRID
   c = textureHybrid(tex, TexCoord);
 #else

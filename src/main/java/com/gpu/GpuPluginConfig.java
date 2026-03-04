@@ -24,6 +24,7 @@
  */
 package com.gpu;
 
+import com.gpu.config.AngleBackend;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
@@ -215,5 +216,16 @@ public interface GpuPluginConfig extends Config
 	default boolean removeVertexSnapping()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+			keyName = "angleBackend",
+			name = "Render backend",
+			description = "ANGLE render backend (Windows). Requires local ANGLE build with buildAllWithLocalAngle.",
+			position = 14
+	)
+	default AngleBackend angleBackend()
+	{
+		return AngleBackend.DEFAULT;
 	}
 }

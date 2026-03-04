@@ -65,7 +65,7 @@ public class FrameTimerOverlay extends OverlayPanel implements FrameTimer.Listen
 		super(plugin);
 		setLayer(OverlayLayer.ABOVE_SCENE);
 		setPosition(OverlayPosition.TOP_RIGHT);
-		panelComponent.setPreferredSize(new Dimension(215, 200));
+		panelComponent.setPreferredSize(new Dimension(240, 260));
 	}
 
 	public void setActive(boolean activate) {
@@ -83,6 +83,12 @@ public class FrameTimerOverlay extends OverlayPanel implements FrameTimer.Listen
 		sb.setLength(0);
 		formatter.format(format, args);
 		return sb.toString();
+	}
+
+	private static String truncate(String s, int maxLen) {
+		if (s == null || s.length() <= maxLen)
+			return s;
+		return s.substring(0, maxLen - 3) + "...";
 	}
 
 	@Override
@@ -129,6 +135,31 @@ public class FrameTimerOverlay extends OverlayPanel implements FrameTimer.Listen
 					.build());
 			}
 
+			children.add(TitleComponent.builder()
+				.text("GPU")
+				.build());
+
+			String device = plugin.getRenderDevice();
+			if (device != null && !device.isEmpty()) {
+				children.add(LineComponent.builder()
+					.left("Device:")
+					.right(truncate(device, 28))
+					.build());
+			}
+			String version = plugin.getRenderVersion();
+			if (version != null && !version.isEmpty()) {
+				children.add(LineComponent.builder()
+					.left("Driver:")
+					.right(truncate(version, 28))
+					.build());
+			}
+			if (plugin.getAngleBackend() != null) {
+				children.add(LineComponent.builder()
+					.left("Backend:")
+					.right(plugin.getAngleBackend().getName())
+					.build());
+			}
+
 			long gpuTime = timings[Timer.RENDER_FRAME.ordinal()];
 			if (gpuTime == 0) {
 				for (var t : Timer.TIMERS)
@@ -136,8 +167,14 @@ public class FrameTimerOverlay extends OverlayPanel implements FrameTimer.Listen
 						gpuTime += timings[t.ordinal()];
 			}
 			addTiming("GPU", gpuTime, true);
+
+			long renderTime = timings[Timer.RENDER_SCENE.ordinal()] + timings[Timer.RENDER_UI.ordinal()];
+			addTiming("Render", renderTime, true);
+
+			addTiming(Timer.RENDER_SCENE, timings, "game world");
+			addTiming(Timer.RENDER_UI, timings, "interface");
 			for (var t : Timer.TIMERS)
-				if (t.isGpuTimer() && t != Timer.RENDER_FRAME)
+				if (t.isGpuTimer() && t != Timer.RENDER_FRAME && t != Timer.RENDER_SCENE && t != Timer.RENDER_UI)
 					addTiming(t, timings);
 
 			children.add(LineComponent.builder()
@@ -214,6 +251,14 @@ public class FrameTimerOverlay extends OverlayPanel implements FrameTimer.Listen
 
 	private void addTiming(Timer timer, long[] timings) {
 		addTiming(timer.name, timings[timer.ordinal()], false);
+	}
+
+	private void addTiming(Timer timer, long[] timings, String desc) {
+		long nanos = timings[timer.ordinal()];
+		if (nanos == 0)
+			return;
+		String label = timer.name + " (" + desc + ")";
+		addTiming(label, nanos, false);
 	}
 
 	private void addTiming(String name, long nanos, boolean bold) {
